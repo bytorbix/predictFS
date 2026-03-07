@@ -1014,6 +1014,8 @@ ssize_t fs_stat(FileSystem *fs, size_t inode_number)
     }
 }
 
+// Helpers
+
 ssize_t fs_lookup(FileSystem *fs, const char *path) 
 {
     // Validation check
@@ -1042,3 +1044,31 @@ ssize_t fs_lookup(FileSystem *fs, const char *path)
     return (ssize_t)current_inode;
 }
 
+Inode* fs_read_inode(FileSystem *fs, size_t inode_number) 
+{
+    if (fs == NULL || fs->disk == NULL) 
+    {
+        perror("fs_read_inode: Error fs or disk is invalid (NULL)"); 
+        return NULL;
+    }
+    if (inode_number > fs->meta_data->inodes) {
+        perror("fs_read_inode: Error inode_number exceeds the total inodes count"); 
+        return NULL;
+    }
+
+    Block buffer;
+    size_t block_idx = 1 + (inode_number / INODES_PER_BLOCK);
+    size_t offset = inode_number % INODES_PER_BLOCK;
+    if (disk_read(fs->disk, block_idx, buffer.data) < 0) 
+    {
+        perror("fs_read_inode: Error reading from disk has failed"); 
+        return NULL;
+    }
+    Inode *inode = malloc(sizeof(Inode));
+    if (inode == NULL) 
+    {
+        return NULL;
+    }
+    *inode = buffer.inodes[offset]; // copy the struct
+    return inode;
+}

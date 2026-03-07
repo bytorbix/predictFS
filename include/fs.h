@@ -62,4 +62,4 @@ ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, 
 ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length, size_t offset);
 size_t* fs_allocate(FileSystem *fs, size_t blocks_to_reserve);
 ssize_t fs_lookup(FileSystem *fs, const char *path);
-
+Inode* fs_read_inode(FileSystem *fs, size_t inode_number);
