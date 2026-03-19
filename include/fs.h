@@ -15,7 +15,6 @@
 // File System Constants
 #define MAGIC_NUMBER (0xf0f03410)
 #define INODES_PER_BLOCK (BLOCK_SIZE / sizeof(Inode))
-#define POINTERS_PER_BLOCK (1024)
 
 // File System Structure
 
@@ -34,7 +33,7 @@ union Block {
     
     SuperBlock super;                      // File System Metadata: Contains the SuperBlock structure (Block 0).
     Inode inodes[INODES_PER_BLOCK];        // Inode Table Block: Stores an array of 128 Inode structures (metadata for files).
-    uint32_t pointers[POINTERS_PER_BLOCK]; // Indirect Block: An array of block numbers used for large file addressing.
+    Extent extents[EXTENTS_PER_BLOCK];     // Extents Block: An array of extents stored on a block
     char data[BLOCK_SIZE];                 // Data Block: Raw storage for file content.
 
 };
@@ -60,6 +59,9 @@ bool fs_remove(FileSystem *fs, size_t inode_number);
 ssize_t fs_stat(FileSystem *fs, size_t inode_number);
 ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, size_t offset);
 ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length, size_t offset);
-size_t* fs_allocate(FileSystem *fs, size_t blocks_to_reserve);
+Extent fs_allocate(FileSystem *fs, size_t blocks_to_reserve, uint32_t extent_block);
 ssize_t fs_lookup(FileSystem *fs, const char *path);
 Inode* fs_read_inode(FileSystem *fs, size_t inode_number);
+uint32_t extent_lookup(FileSystem *fs, Inode *inode, uint32_t logical_block);
+
+bool extent_add(FileSystem *fs, Inode *inode, uint32_t start, uint32_t length);

@@ -1,8 +1,15 @@
 #pragma once
 #include <stdint.h>
 
-// Inode Constants
-#define POINTERS_PER_INODE (5)
+// Extent declaration
+typedef struct Extent Extent;
+struct Extent {
+    uint32_t start; // First physical Block
+    uint32_t length; // Amount of contiguous allocated blocks 
+};
+
+#define EXTENTS_PER_BLOCK (BLOCK_SIZE / sizeof(Extent))
+#define EXTENTS_PER_INODE (3)
 
 
 // Inode Status
@@ -14,15 +21,16 @@
 // struct
 
 typedef struct Inode Inode;
-struct Inode{
+struct Inode
+{
     uint32_t valid;                      // Status: 0 Indicates Free/Deleted Slot, 
-                                            // 1 Indicatesa an Allocated File Inode 
-                                            // 2 Indicates a Directory Inode
+                                         // 1 Indicatesa an Allocated File Inode 
+                                         // 2 Indicates a Directory Inode
     uint32_t size;                       // File size in bytes.
-    uint32_t direct[POINTERS_PER_INODE]; // Direct block addresses for the file's first data blocks.
-    uint32_t indirect;                   // Address of the single indirect block (1024 indirect pointers).
-    uint32_t double_indirect;            // Address of the double indirect block
-
+    uint32_t extent_count;               // Count of allocated extents
+    Extent extents[EXTENTS_PER_INODE];   // First Direct Extents
+    uint32_t extent_block;               // Extents Block Physical Block
     // FUSE related fields needed (perms, time)
     
 };
+

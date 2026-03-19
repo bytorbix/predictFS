@@ -10,3 +10,4 @@ mfs
 pfs
 pfs_fuse
 .vscode/
+.claude/

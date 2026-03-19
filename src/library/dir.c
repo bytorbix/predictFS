@@ -43,9 +43,14 @@ ssize_t dir_create(FileSystem *fs)
     Inode *target = &buffer.inodes[offset];
     target->valid = INODE_DIR;
     target->size = 0;
-    // Zeroing Out pointers
-    for (size_t i = 0; i < 5; i++) target->direct[i] = 0;
-    target->indirect = 0;
+
+    for(size_t i = 0; i < EXTENTS_PER_INODE; i++) 
+    {
+        target->extents[i].start = 0;
+        target->extents[i].length = 0;
+    }
+    target->extent_count = 0;
+    target->extent_block = 0;
 
     if (disk_write(fs->disk, block_idx, buffer.data) < 0) return -1;
     return (ssize_t)inode_num;

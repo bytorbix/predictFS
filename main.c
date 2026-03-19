@@ -1,185 +1,204 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 
 #include "disk.h"
 #include "fs.h"
-#include "dir.h"
-#include "utils.h"
-#include "pfs.h"
 
-void print_passed(const char* message) { printf("[OK]:   %s\n", message); }
-void print_failed(const char* message) { printf("[FAIL]: %s\n", message); }
-
-void bitmap_stats(FileSystem *fs)
+void print_inode_extents(FileSystem *fs, ssize_t inode_number)
 {
-    uint32_t total = fs->meta_data->blocks;
-    uint32_t used = 0;
-    for (uint32_t i = 0; i < total; i++)
-        if (get_bit(fs->bitmap->bits, i)) used++;
+    Inode *inode = fs_read_inode(fs, inode_number);
+    if (!inode) { printf("  [inode read failed]\n"); return; }
 
-    printf("bitmap: %u/%u blocks used, %u free (%u bitmap block(s))\n",
-           used, total, total - used, fs->meta_data->bitmap_blocks);
-}
+    printf("  inode %zd: size=%u, extent_count=%u\n",
+           inode_number, inode->size, inode->extent_count);
 
-void ls(FileSystem *fs, ssize_t dir_inode) // Demo ls command for test case
-{
-    // Validation check
-    if (fs == NULL || fs->disk == NULL) {
-        perror("ls: Error fs or disk is invalid (NULL)");
-        return;
-    }
-    if (!fs->disk->mounted)
-    {
-        fprintf(stderr, "ls: Error disk is not mounted, cannot procceed t\n");
-        return;
+    uint32_t inline_count = inode->extent_count < EXTENTS_PER_INODE
+                            ? inode->extent_count : EXTENTS_PER_INODE;
+    for (uint32_t i = 0; i < inline_count; i++) {
+        printf("    [inline %u] start=%-4u length=%u\n",
+               i, inode->extents[i].start, inode->extents[i].length);
     }
 
-    // Read the directory inode and confirm it's a directory
-    uint32_t inode_block_idx = 1 + (dir_inode / INODES_PER_BLOCK);
-    uint32_t inode_offset = dir_inode % INODES_PER_BLOCK;
-
-    Block inode_buf;
-    if (disk_read(fs->disk, inode_block_idx, inode_buf.data) < 0) return;
-
-    Inode *target = &inode_buf.inodes[inode_offset]; // our dir inode
-
-    if (target->valid != INODE_DIR)
-    {
-        perror("ls: Inode given is not a directory.");
-        return;
-    }
-    int count = 0;
-    for (size_t i = 0; i < target->size; i+=32) 
-    {
-        DirEntry entry;
-        if (fs_read(fs, dir_inode, (char *)&entry, sizeof(DirEntry), i) < 0) return;
-        if ((entry.inode_number != UINT32_MAX)) 
-        {
-            size_t file_size = fs_stat(fs, (size_t)entry.inode_number);
-            printf("File: %d (Inode %d) - %s (Size %ld)\n", count, entry.inode_number, entry.name, file_size);
-            count++;
-        }
-    }
-}
-
-void cat(FileSystem *fs, ssize_t inode_file) 
-{
-    // Validation check
-    if (fs == NULL || fs->disk == NULL) {
-        perror("cat: Error fs or disk is invalid (NULL)");
-        return;
-    }
-    if (!fs->disk->mounted)
-    {
-        fprintf(stderr, "cat: Error disk is not mounted, cannot procceed t\n");
-        return;
-    }
-
-    size_t file_size = fs_stat(fs, inode_file);
-    if (file_size <= 0) return;
-
-    char *buffer = malloc(file_size + 1);
-    if (!buffer) {
-        perror("cat: malloc failed");
-        return;
-    }
-    if (fs_read(fs, inode_file, buffer, file_size, 0) < 0) 
-    { 
-        free(buffer);
-        return; 
-    }
-    buffer[file_size] = '\0';
-
-    int word_count = 0;
-    for (size_t i = 0; i < file_size; i++) {
-        putchar(buffer[i]);
-
-        if (isspace(buffer[i])) {
-            word_count++;
-
-            if (word_count >= 30) {
-                putchar('\n');
-                word_count = 0;
-
-                while (i + 1 < file_size && isspace(buffer[i + 1])) { // skip extra spaces
-                    i++;
-                }
+    if (inode->extent_count > EXTENTS_PER_INODE && inode->extent_block != 0) {
+        printf("    [extent_block] phys=%u\n", inode->extent_block);
+        Block buf;
+        uint32_t inode_block_idx = 1 + (inode_number / INODES_PER_BLOCK);
+        // re-read from disk to get extent block
+        if (disk_read(fs->disk, inode->extent_block, buf.data) == 0) {
+            uint32_t overflow = inode->extent_count - EXTENTS_PER_INODE;
+            for (uint32_t i = 0; i < overflow; i++) {
+                printf("    [overflow %u] start=%-4u length=%u\n",
+                       i, buf.extents[i].start, buf.extents[i].length);
             }
         }
+        (void)inode_block_idx;
     }
-    printf("\n");
-    free(buffer);
+
+    free(inode);
 }
 
+void print_passed(const char* message) 
+{ 
+    printf("[OK]:   %s\n", message); 
+}
+
+void print_failed(const char* message) { 
+    printf("[FAIL]: %s\n", message); 
+}
 
 int main() {
-    Disk *disk = disk_open("disk.img", 100000);
-    pfs_format(disk);
+    Disk *disk = disk_open("disk.img", 1000);
+    if (!disk) { print_failed("disk_open"); return 1; }
 
-    pFileSystem *pfs = calloc(1, sizeof(pFileSystem));
-    pfs_mount(pfs, disk);
+    if (!fs_format(disk)) { print_failed("fs_format"); return 1; }
+    print_passed("fs_format");
 
-    // Allocate a directory
-    ssize_t inode_dir1 = dir_create(pfs->fs);
-    ssize_t inode_sub_dir1 = dir_create(pfs->fs);
-    ssize_t inode_sub_dir2 = dir_create(pfs->fs);
+    FileSystem fs = {0};
+    if (!fs_mount(&fs, disk)) { print_failed("fs_mount"); return 1; }
+    print_passed("fs_mount");
 
-    // Adding directories
-    if (dir_add(pfs->fs, 0, "dir1", inode_dir1) < 0) {
-        print_failed("dir_add test_case1 failed");
+    // --- Test 1: create ---
+    ssize_t inode = fs_create(&fs);
+    if (inode < 0) { print_failed("fs_create"); return 1; }
+    print_passed("fs_create");
+
+    // --- Test 2: write + read (small) ---
+    char *msg = "Hello, extents!";
+    size_t msg_len = strlen(msg);
+    if (fs_write(&fs, inode, msg, msg_len, 0) != (ssize_t)msg_len) {
+        print_failed("fs_write small");
+    } else {
+        print_passed("fs_write small");
     }
-    if (dir_add(pfs->fs, inode_dir1, "dir2", inode_sub_dir1) < 0) {
-        print_failed("dir_add test_case2 failed");
+
+    char rbuf[64] = {0};
+    if (fs_read(&fs, inode, rbuf, msg_len, 0) != (ssize_t)msg_len || strcmp(rbuf, msg) != 0) {
+        print_failed("fs_read small");
+    } else {
+        print_passed("fs_read small");
     }
-    if (dir_add(pfs->fs, inode_sub_dir1, "dir3", inode_sub_dir2) < 0) {
-        print_failed("dir_add test_case3 failed");
+
+    // --- Test 3: stat ---
+    ssize_t size = fs_stat(&fs, inode);
+    if (size != (ssize_t)msg_len) {
+        print_failed("fs_stat");
+    } else {
+        print_passed("fs_stat");
     }
 
-    // Adding the files 
-    ssize_t inode = pfs_create(pfs, "/dir1/dir2/dir3/file1.txt");
-    // Writing data into one of the files
-    char *text = "Hello World!";
-    if (pfs_write(pfs, inode, text, strlen(text), 0) < 0) return -1;
+    // --- Test 4: write + read (multi-block, 3 blocks) ---
+    ssize_t inode2 = fs_create(&fs);
+    size_t large_size = BLOCK_SIZE * 3;
+    char *wbuf = malloc(large_size);
+    char *rbuf2 = malloc(large_size);
+    memset(wbuf, 0xAB, large_size);
 
-    // Lookup the sub directories that holds the files
-    ssize_t desired_dir  = fs_lookup(pfs->fs, "/dir1/dir2/dir3");
-    
-    // List files in the directory
-    ls(pfs->fs, desired_dir);
+    if (fs_write(&fs, inode2, wbuf, large_size, 0) != (ssize_t)large_size) {
+        print_failed("fs_write multi-block");
+    } else {
+        print_passed("fs_write multi-block");
+    }
 
-    // print the file with content
-    cat(pfs->fs, inode);
+    if (fs_read(&fs, inode2, rbuf2, large_size, 0) != (ssize_t)large_size ||
+        memcmp(wbuf, rbuf2, large_size) != 0) {
+        print_failed("fs_read multi-block");
+    } else {
+        print_passed("fs_read multi-block");
+    }
 
-    bitmap_stats(pfs->fs);
+    free(wbuf);
+    free(rbuf2);
 
-    // Double Indirect Test (5MB file, exceeds single indirect ~4MB range)
-    size_t large_size = 5 * 1024 * 1024;
-    char *write_buf = malloc(large_size);
-    char *read_buf  = malloc(large_size);
-    memset(write_buf, 0xAB, large_size);
+    // --- Test 5: remove ---
+    if (!fs_remove(&fs, inode)) {
+        print_failed("fs_remove");
+    } else {
+        print_passed("fs_remove");
+    }
 
-    ssize_t inode_large = pfs_create(pfs, "/dir1/dir2/dir3/largefile.bin");
-    pfs_write(pfs, inode_large, write_buf, large_size, 0);
-    fs_read(pfs->fs, inode_large, read_buf, large_size, 0);
+    // stat on removed inode should return -1
+    if (fs_stat(&fs, inode) != -1) {
+        print_failed("fs_stat on removed inode should return -1");
+    } else {
+        print_passed("fs_stat on removed inode returns -1");
+    }
 
-    if (memcmp(write_buf, read_buf, large_size) == 0)
-        print_passed("double indirect: 5MB write/read verified");
-    else
-        print_failed("double indirect: data mismatch");
+    // --- Test 7: extent fragmentation + overflow ---
+    // Interleave 1-block writes between two files to force non-contiguous extents.
+    // EXTENTS_PER_INODE=3, so after 4 fragmented writes file_a spills to the extent block.
+    {
+        ssize_t file_a = fs_create(&fs);
+        ssize_t file_b = fs_create(&fs);
 
-    bitmap_stats(pfs->fs);
-    fs_remove(pfs->fs, inode_large);
-    bitmap_stats(pfs->fs);
+        char *blk_w = malloc(BLOCK_SIZE);
+        char *blk_r = malloc(BLOCK_SIZE);
+        int ok = 1;
 
-    free(write_buf);
-    free(read_buf);
-     
+        for (int i = 0; i < 5; i++) {
+            // write block i to file_a with pattern 0xA0+i
+            memset(blk_w, 0xA0 + i, BLOCK_SIZE);
+            if (fs_write(&fs, file_a, blk_w, BLOCK_SIZE, i * BLOCK_SIZE) != (ssize_t)BLOCK_SIZE)
+                { ok = 0; break; }
 
-    // Close and exit
-    pfs_unmount(pfs);
-    free(pfs);
+            // write a filler block to file_b to break contiguity
+            memset(blk_w, 0xFF, BLOCK_SIZE);
+            if (fs_write(&fs, file_b, blk_w, BLOCK_SIZE, i * BLOCK_SIZE) != (ssize_t)BLOCK_SIZE)
+                { ok = 0; break; }
+
+            printf("  -- after write %d --\n", i);
+            print_inode_extents(&fs, file_a);
+        }
+
+        if (!ok) {
+            print_failed("extent fragmentation: write");
+        } else {
+            print_passed("extent fragmentation: write");
+        }
+
+        // verify each block of file_a has the correct pattern
+        ok = 1;
+        for (int i = 0; i < 5; i++) {
+            memset(blk_r, 0, BLOCK_SIZE);
+            if (fs_read(&fs, file_a, blk_r, BLOCK_SIZE, i * BLOCK_SIZE) != (ssize_t)BLOCK_SIZE) {
+                ok = 0; break;
+            }
+            // check first and last byte of the block
+            if ((unsigned char)blk_r[0] != (unsigned char)(0xA0 + i) ||
+                (unsigned char)blk_r[BLOCK_SIZE - 1] != (unsigned char)(0xA0 + i)) {
+                ok = 0; break;
+            }
+        }
+        if (!ok) {
+            print_failed("extent fragmentation: read verify");
+        } else {
+            print_passed("extent fragmentation: read verify (inline + overflow extents)");
+        }
+
+        fs_remove(&fs, file_a);
+        fs_remove(&fs, file_b);
+        free(blk_w);
+        free(blk_r);
+    }
+
+    // --- Test 6: unmount + remount (persistence) ---
+    fs_unmount(&fs);  // also closes disk
+    print_passed("fs_unmount");
+
+    Disk *disk2 = disk_open("disk.img", 1000);
+    if (!disk2) { print_failed("disk_open for remount"); return 1; }
+
+    FileSystem fs2 = {0};
+    if (!fs_mount(&fs2, disk2)) { print_failed("fs_mount after unmount"); return 1; }
+    print_passed("fs_mount after unmount");
+
+    char rbuf3[64] = {0};
+    if (fs_read(&fs2, inode2, rbuf3, 4, 0) < 0 || (unsigned char)rbuf3[0] != 0xAB) {
+        print_failed("fs_read after remount");
+    } else {
+        print_passed("fs_read after remount");
+    }
+
+    fs_unmount(&fs2);  // also closes disk2
     return 0;
 }
-
