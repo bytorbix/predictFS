@@ -36,13 +36,13 @@ int main() {
             bucket->growing_count, bucket->mean_ratio, pfs_confidence(bucket));
     }
 
-    // --- Test 2: file that doesn't grow ---
-    // first write 500 bytes, no second write, remove immediately
+    // file that doesn't grow
+    // first write 500 bytes 
     ssize_t inode2 = pfs_create(&pfs, "/static.log");
     pfs_write(&pfs, inode2, buf, 500, 0);
     pfs_remove(&pfs, inode2);
 
-    // tendency should drop to 0.50 (1 grew, 1 didn't)
+    // tendency should drop to 0.50 
     entry = find_entry(&pfs, "log");
     if (entry) {
         BucketStats *bucket = &entry->buckets[0];
@@ -50,8 +50,8 @@ int main() {
             bucket->count, bucket->tendency, bucket->mean_final_size);
     }
 
-    // --- Test 3: bucket 1 routing (first write > 4KB) ---
-    char *big = calloc(6000, 1);  // 6KB — should land in bucket 1
+    // bucket 1 routing 
+    char *big = calloc(6000, 1);  // should land in bucket 1
     ssize_t inode3 = pfs_create(&pfs, "/big.log");
     pfs_write(&pfs, inode3, big, 6000, 0);
     pfs_remove(&pfs, inode3);
@@ -63,7 +63,7 @@ int main() {
             entry->buckets[1].count, entry->buckets[1].tendency, entry->buckets[1].mean_final_size);
     }
 
-    // --- Test 4: persistence across remount ---
+    // persistence across remount 
     pfs_unmount(&pfs);
 
     Disk *disk2 = disk_open("disk.img", 1000);
@@ -75,6 +75,39 @@ int main() {
         printf("after remount — bucket[0] count=%u tendency=%.2f\n",
             entry->buckets[0].count, entry->buckets[0].tendency);
     }
+
+    // pre allocation trigger
+    // train with 60 log files
+    char small[500];
+    memset(small, 'B', sizeof(small));
+    for (int i = 0; i < 60; i++) {
+        char path[32];
+        snprintf(path, sizeof(path), "/train%d.log", i);
+        ssize_t t = pfs_create(&pfs2, path);
+        pfs_write(&pfs2, t, small, 100, 0);
+        pfs_write(&pfs2, t, small, 400, 100);
+        pfs_remove(&pfs2, t);
+    }
+
+    // print confidence after training
+    ExtensionEntry *entry2 = find_entry(&pfs2, "log");
+    if (entry2) {
+        BucketStats *b = &entry2->buckets[0];
+        printf("after training — count=%u tendency=%.2f mean_ratio=%.2f confidence=%.2f\n",
+            b->count, b->tendency, b->mean_ratio, pfs_confidence(b));
+    }
+
+    // now create a file and check extent count after writes
+    ssize_t pred = pfs_create(&pfs2, "/predicted.log");
+    pfs_write(&pfs2, pred, small, 100, 0);
+
+    Inode *inode_check = fs_read_inode(pfs2.fs, pred);
+    if (inode_check) {
+        printf("predicted file extent_count=%u\n", inode_check->extent_count);
+        free(inode_check);
+    }
+    pfs_remove(&pfs2, pred);
+
     pfs_unmount(&pfs2);
 
 

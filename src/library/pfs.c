@@ -117,19 +117,39 @@ ssize_t pfs_write(pFileSystem *pfs, size_t inode_number, char *data, size_t leng
         perror("pfs_write: Error pfs is invalid");
         return -1;
     }
-    ssize_t flag = fs_write(pfs->fs, inode_number, data, length, offset);
-    if (flag == -1) {
-        return -1;
-    }
-    if (flag) 
-    {
-        LiveFileEntry *live = find_live_entry(pfs, inode_number);
-        if (live != NULL && live->first_write_size == 0) {
-            live->first_write_size = fs_stat(pfs->fs, inode_number);
-            live->bucket_index = get_bucket_index(live->first_write_size);
+
+    // pre allocate on first write
+    LiveFileEntry *live = find_live_entry(pfs, inode_number);
+    if (live != NULL && live->first_write_size == 0) {
+        uint32_t first_size = (uint32_t)length;
+        uint32_t bucket_idx = get_bucket_index(first_size);
+        ExtensionEntry *ext = find_entry(pfs, live->extension);
+        if (ext != NULL) {
+            BucketStats *bucket = &ext->buckets[bucket_idx];
+            float confidence = pfs_confidence(bucket);
+            uint32_t predicted_size = 0;
+            if (confidence >= HIGH_CONFIDENCE) {
+                predicted_size = (uint32_t)(first_size * bucket->mean_ratio);
+            } else if (confidence >= LOW_CONFIDENCE) {
+                predicted_size = (uint32_t)(first_size * (1.0f + bucket->mean_ratio * 0.5f));
+            }
+            if (predicted_size > first_size) {
+                uint32_t blocks = (predicted_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                Inode *inode = fs_read_inode(pfs->fs, inode_number);
+                if (inode != NULL) {
+                    Extent ext_alloc = fs_allocate(pfs->fs, blocks, 0);
+                    if (ext_alloc.start != 0) {
+                        extent_add(pfs->fs, inode, ext_alloc.start, ext_alloc.length);
+                    }
+                    free(inode);
+                }
+            }
         }
+        live->first_write_size = first_size;
+        live->bucket_index = bucket_idx;
+        return fs_write(pfs->fs, inode_number, data, length, offset);
     }
-    return flag;
+    return fs_write(pfs->fs, inode_number, data, length, offset);
 }
 
 bool pfs_unmount(pFileSystem *pfs) 

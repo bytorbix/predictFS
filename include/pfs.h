@@ -10,6 +10,10 @@
 #define BUCKET_1_MAX (524288UL)
 #define BUCKET_2_MAX (67108864UL)
 
+#define HIGH_CONFIDENCE (0.70f)
+#define LOW_CONFIDENCE  (0.40f)
+
+
 typedef struct BucketStats BucketStats;
 struct BucketStats {
     uint32_t lower_bound;
