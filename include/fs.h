@@ -58,10 +58,10 @@ ssize_t fs_create(FileSystem *fs);
 bool fs_remove(FileSystem *fs, size_t inode_number);
 ssize_t fs_stat(FileSystem *fs, size_t inode_number);
 ssize_t fs_read(FileSystem *fs, size_t inode_number, char *data, size_t length, size_t offset);
-ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length, size_t offset);
+ssize_t fs_write(FileSystem *fs, size_t inode_number, const char *data, size_t length, size_t offset);
 Extent fs_allocate(FileSystem *fs, size_t blocks_to_reserve, uint32_t extent_block);
 ssize_t fs_lookup(FileSystem *fs, const char *path);
 Inode* fs_read_inode(FileSystem *fs, size_t inode_number);
 uint32_t extent_lookup(FileSystem *fs, Inode *inode, uint32_t logical_block);
-
 bool extent_add(FileSystem *fs, Inode *inode, uint32_t start, uint32_t length);
+bool fs_truncate(FileSystem *fs, size_t inode_number);

@@ -460,7 +460,7 @@ ssize_t fs_create(FileSystem *fs) {
     return (ssize_t)inode_num;
 }
 
-ssize_t fs_write(FileSystem *fs, size_t inode_number, char *data, size_t length, size_t offset) 
+ssize_t fs_write(FileSystem *fs, size_t inode_number, const char *data, size_t length, size_t offset) 
 {
     // Validation check
      if (fs == NULL || fs->disk == NULL) {
@@ -974,4 +974,80 @@ bool extent_add(FileSystem *fs, Inode *inode, uint32_t start, uint32_t length)
 
     fprintf(stderr, "extent_add: No space left in extent block.\n");
     return false;
+}
+
+bool fs_truncate(FileSystem *fs, size_t inode_number) {
+        // Validation check
+    if (fs == NULL || fs->disk == NULL) {
+        perror("fs_truncate: Error fs or disk is invalid (NULL)"); 
+        return false;
+    }
+    if (!fs->disk->mounted) { 
+        fprintf(stderr, "fs_truncate: Error disk is not mounted, cannot procceed t\n");
+        return false;
+    }
+
+    if (inode_number >= fs->meta_data->inodes) return false;
+
+    // Locate the inode
+    uint32_t inode_block_idx = 1 + (inode_number / INODES_PER_BLOCK);
+    uint32_t inode_offset_in_block = inode_number % INODES_PER_BLOCK;
+
+    // Read the block containing the inode
+    Block inode_buffer;
+    if (disk_read(fs->disk, inode_block_idx, inode_buffer.data) < 0) {
+        fprintf(stderr, "fs_truncate: Error reading inode block has failed.\n");
+        return false;
+    }
+    Inode *target = &inode_buffer.inodes[inode_offset_in_block];
+
+    if (!target->valid) {
+        fprintf(stderr, "fs_truncate: Inode is not valid.\n");
+        return false;
+    }
+
+    // Cleaning the inode
+    target->size = 0;
+    for(size_t i = 0; i < EXTENTS_PER_INODE; i++) 
+    {
+        if (target->extents[i].start != 0 && target->extents[i].length) {
+            for (size_t j = 0; j < target->extents[i].length; j++) {
+                set_bit(fs->bitmap->bits, target->extents[i].start + j, 0);
+            }
+            target->extents[i].start = 0;
+            target->extents[i].length = 0;
+        }
+    }
+    if (target->extent_block != 0) 
+    {
+        Block extents_buf;
+        if (disk_read(fs->disk, target->extent_block, extents_buf.data) < 0) {
+            return false;
+        }
+
+        for (size_t i = 0; i < EXTENTS_PER_BLOCK; i++) 
+        {
+            Extent *extent_ptr = &extents_buf.extents[i];
+            for (size_t j = 0; j < extent_ptr->length; j++)
+                set_bit(fs->bitmap->bits, extent_ptr->start + j, 0);
+        }
+
+        memset(extents_buf.data, 0, BLOCK_SIZE);
+        if (disk_write(fs->disk, target->extent_block, extents_buf.data) < 0) {
+            fprintf(stderr, "fs_truncate: Error failed to write to disk\n");
+            return false;
+        }
+
+        set_bit(fs->bitmap->bits, target->extent_block, 0); 
+        target->extent_block = 0;
+        target->extent_count = 0;
+    }
+    // Write the modified inode back to disk
+    if (disk_write(fs->disk, inode_block_idx, inode_buffer.data) < 0) {
+        return false;
+    }
+
+    // Mark dirty — will be flushed on fs_unmount
+    fs->bitmap->dirty = true;
+    return true;
 }

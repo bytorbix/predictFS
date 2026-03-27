@@ -57,7 +57,7 @@ bool pfs_mount(pFileSystem *pfs, Disk *disk);
 bool pfs_format(Disk *disk);
 bool pfs_unmount(pFileSystem *pfs);
 ssize_t pfs_create(pFileSystem *pfs, const char *path);
-ssize_t pfs_write(pFileSystem *pfs, size_t inode_number, char *data, size_t length, size_t offset);
+ssize_t pfs_write(pFileSystem *pfs, size_t inode_number, const char *data, size_t length, size_t offset);
 ssize_t pfs_remove(pFileSystem *pfs, size_t inode_number);
 ExtensionEntry* add_entry(pFileSystem *pfs, const ExtensionEntry *entry);
 ExtensionEntry* find_entry(pFileSystem *pfs, const char *extension);
